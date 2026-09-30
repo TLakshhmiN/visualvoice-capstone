@@ -1,0 +1,16 @@
+fastapi==0.110.0
+uvicorn[standard]==0.29.0
+transformers==4.41.2
+torch==2.3.1
+accelerate==0.31.0
+sentencepiece==0.2.0
+protobuf==4.25.3
+httpx==0.27.0
+python-multipart==0.0.9
+pydantic==2.7.1
+python-dotenv==1.0.1
+google-generativeai==0.5.4
+faiss-cpu==1.8.0
+numpy==1.26.4
+sacrebleu==2.4.2
+nltk==3.8.1
