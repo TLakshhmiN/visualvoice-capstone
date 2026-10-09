@@ -11,7 +11,7 @@ body {
   overflow-x: hidden;
 }
 
-/* Paper texture - subtle human feel */
+/* Paper texture */
 body::before {
   content: '';
   position: fixed;
@@ -21,132 +21,10 @@ body::before {
   z-index: 1;
 }
 
-/* Dot grid - architectural visible */
+/* Dot grid - visible background */
 .dot-grid {
   background-image: radial-gradient(#d6d3d1 1px, transparent 1px);
   background-size: 24px 24px;
-}
-
-/* 3D perspective */
-.perspective {
-  perspective: 1200px;
-  transform-style: preserve-3d;
-}
-
-/* Visible 3D card with paper stack */
-.card-3d {
-  transform-style: preserve-3d;
-  background: white;
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 
-    4px 4px 0px #1a1a1a,
-    0 2px 8px rgba(0,0,0,0.06);
-  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.card-3d:hover {
-  transform: translate(-2px, -2px) translateZ(10px);
-  box-shadow: 
-    6px 6px 0px #1a1a1a,
-    0 8px 24px rgba(0,0,0,0.1);
-}
-
-/* Pictogram 3D - paper cut style VISIBLE */
-.pictogram-paper {
-  background: white;
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 3px 3px 0px #1a1a1a;
-  transform-style: preserve-3d;
-  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
-  position: relative;
-}
-
-.pictogram-paper::after {
-  content: '';
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  right: -4px;
-  bottom: -4px;
-  background: #e7e5e4;
-  z-index: -1;
-  border-radius: inherit;
-}
-
-.pictogram-paper:hover {
-  transform: translate(-1px, -1px) rotate(0.5deg) translateZ(15px);
-  box-shadow: 5px 5px 0px #1a1a1a;
-}
-
-/* Floating 3D blocks - VISIBLE eye-catching */
-.float-block {
-  position: absolute;
-  background: white;
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 4px 4px 0px #1a1a1a;
-  transform-style: preserve-3d;
-}
-
-.float-block::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 100%);
-  border-radius: inherit;
-}
-
-/* Additional visible floating shapes */
-.float-3d {
-  position: absolute;
-  transform-style: preserve-3d;
-  background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 4px 4px 0px #1a1a1a;
-}
-
-.float-3d-yellow {
-  background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%);
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 4px 4px 0px #1a1a1a;
-}
-
-.float-3d-green {
-  background: linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%);
-  border: 1.5px solid #1a1a1a;
-  box-shadow: 4px 4px 0px #1a1a1a;
-}
-
-/* Hand-drawn underline */
-.hand-underline {
-  position: relative;
-  display: inline-block;
-}
-
-.hand-underline::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: -2px;
-  right: -2px;
-  height: 8px;
-  background: url("data:image/svg+xml,%3Csvg width='100' height='8' viewBox='0 0 100 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 5 Q 20 2, 40 5 T 80 5 Q 90 6, 100 5' stroke='%231a1a1a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x;
-  opacity: 0.3;
-}
-
-/* Keyframe animations for floating */
-@keyframes floatY {
-  0%, 100% { transform: translateY(0) rotateX(15deg) rotateY(-15deg); }
-  50% { transform: translateY(-20px) rotateX(20deg) rotateY(-10deg); }
-}
-
-@keyframes floatY2 {
-  0%, 100% { transform: translateY(0) rotateX(-10deg) rotateY(20deg); }
-  50% { transform: translateY(15px) rotateX(-5deg) rotateY(25deg); }
-}
-
-@keyframes floatRotate {
-  0%, 100% { transform: translateY(0) rotateZ(0) rotateX(20deg) rotateY(10deg); }
-  50% { transform: translateY(-10px) rotateZ(2deg) rotateX(25deg) rotateY(15deg); }
 }
 
 /* Custom scrollbar */

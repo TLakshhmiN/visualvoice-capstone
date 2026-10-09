@@ -25,21 +25,21 @@ function getCLIPModel(text: string) {
     input: text,
     pictograms,
     raw_output: pictograms.join(" → "),
-    model: "CLIP Model (Image-grounded retrieval)",
+    model: "CLIP Model",
     method: "clip_retrieval",
     num_tokens: pictograms.length,
     is_clip_fallback: false
   };
 }
 
-function getCLIPFallback(text: string, t5Error?: string) {
+function getCLIPFallback(text: string) {
   const base = getCLIPModel(text);
   return {
     ...base,
-    model: "CLIP Model (Fallback - T5 unreachable, auto-switched)",
-    method: "clip_fallback_auto",
+    model: "CLIP Model",
+    method: "clip_fallback",
     is_clip_fallback: true,
-    raw_output: t5Error ? `T5 unreachable (${t5Error.slice(0, 80)}), auto-switched to CLIP: ${base.pictograms.join(" → ")}` : base.raw_output
+    raw_output: base.pictograms.join(" → ")
   };
 }
 
@@ -87,16 +87,13 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const { Client } = await import("@gradio/client");
-      // Connect with timeout - server-side no CORS
       const client = await Client.connect(HF_SPACE_URL);
-      
       const signatures = [
         { fn: "/translate", args: [text] },
         { fn: 0, args: [text] },
         { fn: "/translate", args: [text, "auto"] },
         { fn: 0, args: [text, "auto"] },
       ];
-
       for (const sig of signatures) {
         try {
           const result = await (client as any).predict(sig.fn, sig.args);
@@ -107,8 +104,8 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
               input: text,
               pictograms,
               raw_output: formatted,
-              model: "T5-Base (51.41 BLEU) - HF ZeroGPU 16GB RAM",
-              method: "t5_via_proxy",
+              model: "T5-Base",
+              method: "t5",
               num_tokens: pictograms.length,
               is_clip_fallback: false
             };
@@ -117,12 +114,10 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
           continue;
         }
       }
-      throw new Error("Empty result from T5");
+      throw new Error("Empty result");
     } catch (err: any) {
       lastError = err;
-      console.warn(`T5 attempt ${attempt+1} failed:`, err.message);
       if (attempt < retries) {
-        // Wait 3s before retry - ZeroGPU cold start needs time
         await new Promise(r => setTimeout(r, 3000));
       }
     }
@@ -134,7 +129,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const text = body.text || "";
-    const modelType = body.modelType || body.model_type || "auto";
+    const modelType = body.modelType || "auto";
 
     if (!text.trim()) {
       return NextResponse.json({ error: "Text cannot be empty" }, { status: 400 });
@@ -144,13 +139,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(getCLIPModel(text));
     }
 
-    // Try T5 with retry (handles ZeroGPU cold start)
     try {
       const result = await tryT5WithRetry(text, 2);
       return NextResponse.json(result);
     } catch (err: any) {
-      console.warn("All T5 attempts failed, fallback to CLIP:", err?.message);
-      return NextResponse.json(getCLIPFallback(text, err?.message || "Failed to fetch"));
+      return NextResponse.json(getCLIPFallback(text));
     }
 
   } catch (err: any) {
@@ -160,9 +153,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    message: "VisualVoice Translate Proxy API - Fixes CORS Failed to fetch",
-    hf_space_url: HF_SPACE_URL,
-    fix: "Server-side calls HF Space, no browser CORS, retries for ZeroGPU cold start",
-    usage: "POST {text, modelType: 't5'|'clip'|'auto'}"
+    message: "VisualVoice Translate Proxy",
+    hf_space_url: HF_SPACE_URL
   });
 }

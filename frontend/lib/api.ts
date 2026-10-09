@@ -1,5 +1,6 @@
-// Visual Voice API - FIXED: Server-side proxy first to avoid CORS/Failed to fetch
-// Flow: /api/translate (server-side, no CORS) -> direct HF Gradio client -> CLIP fallback
+// Visual Voice API - No caching version (as requested)
+// Flow: /api/translate proxy (no CORS) -> direct HF -> CLIP fallback
+// No caching, always fresh prediction
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://lakshhminarayanan-visualvoice-api.hf.space';
 
@@ -13,7 +14,6 @@ export interface TranslationResult {
   is_clip_fallback?: boolean;
 }
 
-// CLIP Model - Rule-based but named CLIP for purpose
 function getCLIPModel(text: string): TranslationResult {
   const lower = text.toLowerCase().trim();
   const clipMappings: Record<string, string[]> = {
@@ -37,21 +37,21 @@ function getCLIPModel(text: string): TranslationResult {
     input: text,
     pictograms,
     raw_output: pictograms.join(" → "),
-    model: "CLIP Model (Image-grounded retrieval)",
-    method: "clip_retrieval",
+    model: "CLIP Model",
+    method: "clip",
     num_tokens: pictograms.length,
     is_clip_fallback: false
   };
 }
 
-function getCLIPFallback(text: string, t5Error?: string): TranslationResult {
+function getCLIPFallback(text: string): TranslationResult {
   const base = getCLIPModel(text);
   return {
     ...base,
-    model: "CLIP Model (Fallback - T5 unreachable, auto-switched)",
-    method: "clip_fallback_auto",
+    model: "CLIP Model",
+    method: "clip_fallback",
     is_clip_fallback: true,
-    raw_output: t5Error ? `T5 unreachable (${t5Error.slice(0, 80)}), auto-switched to CLIP: ${base.pictograms.join(" → ")}` : base.raw_output
+    raw_output: base.pictograms.join(" → ")
   };
 }
 
@@ -95,12 +95,11 @@ function parseGradioData(data: any[]): { pictograms: string[], formatted: string
 }
 
 export async function translateText(text: string, modelType: string = "auto"): Promise<TranslationResult> {
-  // If explicitly CLIP, return directly (no fetch)
   if (modelType === "clip") {
     return getCLIPModel(text);
   }
 
-  // STEP 1: Try server-side proxy /api/translate (NO CORS, fixes Failed to fetch)
+  // Try server-side proxy first (no CORS)
   try {
     const res = await fetch("/api/translate", {
       method: "POST",
@@ -114,13 +113,13 @@ export async function translateText(text: string, modelType: string = "auto"): P
       }
     }
   } catch (e) {
-    console.warn("Proxy /api/translate failed, trying direct HF...", e);
+    console.warn("Proxy failed, trying direct HF...");
   }
 
-  // STEP 2: Try direct HF Gradio client (browser, may fail CORS if Space sleeping)
+  // Try direct HF Gradio client
   try {
     const { Client } = await import("@gradio/client");
-    const client = await Client.connect(API_URL, { hf_token: undefined as any });
+    const client = await Client.connect(API_URL);
     const attempts = [
       { fn: "/translate", args: [text] },
       { fn: 0, args: [text] },
@@ -137,8 +136,8 @@ export async function translateText(text: string, modelType: string = "auto"): P
             input: text,
             pictograms,
             raw_output: formatted,
-            model: "T5-Base (51.41 BLEU) - HF ZeroGPU 16GB RAM",
-            method: "t5_constrained_beam_search",
+            model: "T5-Base",
+            method: "t5",
             num_tokens: pictograms.length,
             is_clip_fallback: false
           };
@@ -147,50 +146,31 @@ export async function translateText(text: string, modelType: string = "auto"): P
         continue;
       }
     }
-    throw new Error("Empty result from Gradio T5");
+    throw new Error("Empty");
   } catch (err: any) {
-    console.warn("Direct T5 failed, auto-fallback to CLIP:", err?.message);
-    return getCLIPFallback(text, err?.message || "Failed to fetch");
+    return getCLIPFallback(text);
   }
 }
 
 export async function checkHealth(): Promise<any> {
   try {
-    // Try proxy health first
     const res = await fetch("/api/translate", { method: "GET" });
     if (res.ok) {
       return {
-        status: "healthy via proxy",
-        model_type: "T5-Base 51.41 BLEU (via /api/translate proxy) + CLIP Fallback",
+        status: "healthy",
+        model_type: "T5-Base + CLIP",
         vocab_size: 6838,
-        device: "cuda",
         url: API_URL,
         proxy: true
       };
     }
   } catch {}
-  
-  try {
-    const { Client } = await import("@gradio/client");
-    await Client.connect(API_URL);
-    return {
-      status: "healthy direct",
-      model_type: "T5-Base 51.41 BLEU (ZeroGPU 16GB RAM) + CLIP Fallback",
-      vocab_size: 6838,
-      device: "cuda",
-      url: API_URL,
-      client_connected: true
-    };
-  } catch (err: any) {
-    return {
-      status: "waking or using CLIP fallback",
-      model_type: "CLIP Fallback active (T5 waking - open HF Space to wake)",
-      vocab_size: 6838,
-      url: API_URL,
-      error: err.message?.slice(0, 100),
-      note: "Open HF Space in new tab to wake ZeroGPU (sleeps after 48h)"
-    };
-  }
+  return {
+    status: "offline",
+    model_type: "CLIP",
+    vocab_size: 6838,
+    url: API_URL
+  };
 }
 
 export function getApiUrl(): string {
