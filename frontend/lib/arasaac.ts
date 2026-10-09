@@ -1,119 +1,82 @@
-// ARASAAC Pictogram Fetcher - Frontend version (no backend needed)
-// This is the batch_search_pictograms function you were missing
-// Works directly from Vercel frontend -> ARASAAC API
+// ARASAAC fetcher - Clean, no emojis, handles punctuation like silent.
 
 export interface PictogramDetail {
   word: string;
   id?: number;
   image_url?: string;
-  image_url_300?: string;
   fallback?: boolean;
-  keywords?: string[];
 }
 
-// Stopwords to filter for clean AAC display - articles have no meaningful pictograms
 export const STOPWORDS = new Set([
   "the", "a", "an", "of", "be", "is", "are", "was", "were", 
   "at", "in", "on", "at_the", "of_the", "to", "for", "by", "with", "from"
 ]);
 
-const ARASAAC_API_BASE = "https://api.arasaac.org/api";
-const ARASAAC_STATIC_BASE = "https://static.arasaac.org/pictograms";
-
-// Cache to avoid repeated API calls
+const API_BASE = "https://api.arasaac.org/api";
+const STATIC_BASE = "https://static.arasaac.org/pictograms";
 const cache = new Map<string, PictogramDetail>();
 
+function cleanWord(word: string): string {
+  return word.toLowerCase().trim().replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_");
+}
+
 export async function searchPictogram(word: string): Promise<PictogramDetail | null> {
-  const cleanWord = word.trim().toLowerCase();
-  if (!cleanWord) return null;
+  const original = word.trim();
+  const cleaned = cleanWord(word);
   
-  // Skip stopwords - no pictogram for articles
-  if (STOPWORDS.has(cleanWord)) {
-    return {
-      word: cleanWord,
-      id: undefined,
-      image_url: undefined,
-      fallback: true,
-      keywords: []
-    };
+  if (!cleaned || cleaned.length < 2) return null;
+  if (STOPWORDS.has(cleaned)) {
+    return { word: original, fallback: true };
   }
+  if (cache.has(cleaned)) return cache.get(cleaned)!;
 
-  // Check cache
-  if (cache.has(cleanWord)) {
-    return cache.get(cleanWord)!;
-  }
-
-  // Try multiple variations for compound tokens like eat_with_the_hand
   const tries = [
-    cleanWord,
-    cleanWord.replace(/_/g, " "),           // eat_with_the_hand -> eat with the hand
-    cleanWord.split("_")[0],                // eat_with_the_hand -> eat
-    cleanWord.replace(/_/g, ""),            // fallback
+    cleaned,
+    cleaned.replace(/_/g, " "),
+    cleaned.split("_")[0],
+    cleaned.split("_").find(w => !STOPWORDS.has(w) && w.length > 2) || cleaned
   ];
 
-  for (const tryWord of tries) {
-    if (!tryWord || STOPWORDS.has(tryWord)) continue;
+  for (const t of tries) {
+    const ct = cleanWord(t);
+    if (!ct || STOPWORDS.has(ct) || ct.length < 2) continue;
     
     try {
-      const response = await fetch(`${ARASAAC_API_BASE}/pictograms/en/search/${encodeURIComponent(tryWord)}`, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
+      const res = await fetch(`${API_BASE}/pictograms/en/search/${encodeURIComponent(ct)}`);
+      if (res.ok) {
+        const data = await res.json();
         if (data && data.length > 0) {
-          const best = data[0];
-          const pictoId = best._id;
+          const id = data[0]._id;
           const result: PictogramDetail = {
-            word: cleanWord,
-            id: pictoId,
-            image_url: `${ARASAAC_STATIC_BASE}/${pictoId}/${pictoId}_500.png`,
-            image_url_300: `${ARASAAC_STATIC_BASE}/${pictoId}/${pictoId}_300.png`,
-            fallback: false,
-            keywords: best.keywords?.slice(0, 3).map((k: any) => k.keyword) || []
+            word: original,
+            id,
+            image_url: `${STATIC_BASE}/${id}/${id}_500.png`,
+            fallback: false
           };
-          cache.set(cleanWord, result);
+          cache.set(cleaned, result);
           return result;
         }
       }
-    } catch (err) {
-      console.warn(`ARASAAC search failed for ${tryWord}:`, err);
-      continue;
-    }
+    } catch { continue; }
   }
 
-  // Fallback - no image found
-  const fallback: PictogramDetail = {
-    word: cleanWord,
-    id: undefined,
-    image_url: undefined,
-    fallback: true,
-    keywords: []
-  };
-  cache.set(cleanWord, fallback);
+  const fallback: PictogramDetail = { word: original, fallback: true };
+  cache.set(cleaned, fallback);
   return fallback;
 }
 
 export async function batch_search_pictograms(words: string[]): Promise<PictogramDetail[]> {
-  // Filter stopwords for display, but keep them in sequence for raw view
-  // For image display, we filter stopwords
-  const meaningfulWords = words.filter(w => !STOPWORDS.has(w.toLowerCase()));
-  const wordsToSearch = meaningfulWords.length > 0 ? meaningfulWords : words;
+  const cleaned = words.map(w => cleanWord(w)).filter(w => w.length > 1);
+  const meaningful = cleaned.filter(w => !STOPWORDS.has(w));
+  const toSearch = meaningful.length > 0 ? meaningful : cleaned;
+  const unique = Array.from(new Set(toSearch));
   
-  const results = await Promise.all(
-    wordsToSearch.map(word => searchPictogram(word))
-  );
-  
-  return results.filter(r => r !== null) as PictogramDetail[];
+  const results = await Promise.all(unique.map(w => searchPictogram(w)));
+  return results.filter(r => r !== null && !r.fallback) as PictogramDetail[];
 }
 
-// Clean pictograms for AAC display - remove articles
 export function cleanPictogramsForAAC(pictograms: string[]): { raw: string[], cleaned: string[] } {
-  const raw = pictograms;
-  const cleaned = pictograms.filter(p => !STOPWORDS.has(p.toLowerCase()));
-  return {
-    raw,
-    cleaned: cleaned.length > 0 ? cleaned : raw
-  };
+  const raw = pictograms.map(p => cleanWord(p)).filter(p => p.length > 0);
+  const cleaned = raw.filter(p => !STOPWORDS.has(p));
+  return { raw, cleaned: cleaned.length > 0 ? cleaned : raw };
 }
