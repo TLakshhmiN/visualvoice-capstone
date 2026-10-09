@@ -4,76 +4,153 @@
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background: #fcfcfc;
-  color: #0f172a;
+  background: #f8f7f4;
+  color: #1a1a1a;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
-/* Subtle 3D perspective container */
-.perspective-container {
+/* Paper texture - subtle human feel */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.02'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Dot grid - architectural visible */
+.dot-grid {
+  background-image: radial-gradient(#d6d3d1 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* 3D perspective */
+.perspective {
   perspective: 1200px;
   transform-style: preserve-3d;
 }
 
-/* 3D card with subtle depth */
+/* Visible 3D card with paper stack */
 .card-3d {
   transform-style: preserve-3d;
-  transition: transform 0.4s cubic-bezier(0.23, 1, 0.32, 1), box-shadow 0.4s ease;
+  background: white;
+  border: 1.5px solid #1a1a1a;
   box-shadow: 
-    0 1px 2px rgba(0,0,0,0.04),
-    0 4px 12px rgba(0,0,0,0.04),
-    0 0 0 1px rgba(0,0,0,0.04);
+    4px 4px 0px #1a1a1a,
+    0 2px 8px rgba(0,0,0,0.06);
+  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .card-3d:hover {
-  transform: translateY(-2px) rotateX(1deg) rotateY(-1deg) translateZ(10px);
+  transform: translate(-2px, -2px) translateZ(10px);
   box-shadow: 
-    0 4px 8px rgba(0,0,0,0.04),
-    0 12px 24px rgba(0,0,0,0.06),
-    0 0 0 1px rgba(0,0,0,0.06);
+    6px 6px 0px #1a1a1a,
+    0 8px 24px rgba(0,0,0,0.1);
 }
 
-/* Pictogram 3D */
-.pictogram-3d {
-  transform-style: preserve-3d;
-  transition: all 0.35s cubic-bezier(0.23, 1, 0.32, 1);
+/* Pictogram 3D - paper cut style VISIBLE */
+.pictogram-paper {
   background: white;
-  border: 1px solid #e2e8f0;
+  border: 1.5px solid #1a1a1a;
+  box-shadow: 3px 3px 0px #1a1a1a;
+  transform-style: preserve-3d;
+  transition: all 0.3s cubic-bezier(0.23, 1, 0.32, 1);
+  position: relative;
 }
 
-.pictogram-3d:hover {
-  transform: translateY(-4px) translateZ(20px) rotateX(2deg);
-  box-shadow: 
-    0 8px 16px rgba(0,0,0,0.06),
-    0 20px 40px rgba(0,0,0,0.08);
-  border-color: #cbd5e1;
+.pictogram-paper::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: -4px;
+  bottom: -4px;
+  background: #e7e5e4;
+  z-index: -1;
+  border-radius: inherit;
 }
 
-/* Floating 3D shapes - subtle */
+.pictogram-paper:hover {
+  transform: translate(-1px, -1px) rotate(0.5deg) translateZ(15px);
+  box-shadow: 5px 5px 0px #1a1a1a;
+}
+
+/* Floating 3D blocks - VISIBLE eye-catching */
+.float-block {
+  position: absolute;
+  background: white;
+  border: 1.5px solid #1a1a1a;
+  box-shadow: 4px 4px 0px #1a1a1a;
+  transform-style: preserve-3d;
+}
+
+.float-block::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0) 100%);
+  border-radius: inherit;
+}
+
+/* Additional visible floating shapes */
 .float-3d {
   position: absolute;
   transform-style: preserve-3d;
   background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 100%);
-  border: 1px solid #e0f2fe;
-  box-shadow: 0 8px 24px rgba(14, 165, 233, 0.08);
+  border: 1.5px solid #1a1a1a;
+  box-shadow: 4px 4px 0px #1a1a1a;
 }
 
-.float-3d::before {
+.float-3d-yellow {
+  background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%);
+  border: 1.5px solid #1a1a1a;
+  box-shadow: 4px 4px 0px #1a1a1a;
+}
+
+.float-3d-green {
+  background: linear-gradient(135deg, #dcfce7 0%, #f0fdf4 100%);
+  border: 1.5px solid #1a1a1a;
+  box-shadow: 4px 4px 0px #1a1a1a;
+}
+
+/* Hand-drawn underline */
+.hand-underline {
+  position: relative;
+  display: inline-block;
+}
+
+.hand-underline::after {
   content: '';
   position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0) 100%);
-  border-radius: inherit;
+  bottom: -4px;
+  left: -2px;
+  right: -2px;
+  height: 8px;
+  background: url("data:image/svg+xml,%3Csvg width='100' height='8' viewBox='0 0 100 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 5 Q 20 2, 40 5 T 80 5 Q 90 6, 100 5' stroke='%231a1a1a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x;
+  opacity: 0.3;
 }
 
-/* Clean scrollbar */
+/* Keyframe animations for floating */
+@keyframes floatY {
+  0%, 100% { transform: translateY(0) rotateX(15deg) rotateY(-15deg); }
+  50% { transform: translateY(-20px) rotateX(20deg) rotateY(-10deg); }
+}
+
+@keyframes floatY2 {
+  0%, 100% { transform: translateY(0) rotateX(-10deg) rotateY(20deg); }
+  50% { transform: translateY(15px) rotateX(-5deg) rotateY(25deg); }
+}
+
+@keyframes floatRotate {
+  0%, 100% { transform: translateY(0) rotateZ(0) rotateX(20deg) rotateY(10deg); }
+  50% { transform: translateY(-10px) rotateZ(2deg) rotateX(25deg) rotateY(15deg); }
+}
+
+/* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #f8fafc; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-
-/* Focus styles */
-textarea:focus, button:focus-visible {
-  outline: 2px solid #0ea5e9;
-  outline-offset: 2px;
-}
+::-webkit-scrollbar-track { background: #f5f5f4; }
+::-webkit-scrollbar-thumb { background: #a8a29e; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #78716c; }
