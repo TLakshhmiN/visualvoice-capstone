@@ -137,10 +137,9 @@ export default function Home() {
     }
   };
 
-  // Helper to get correct source display
+  // Helper to get correct source display - USES result.source DIRECTLY (FIX)
   const getSourceDisplay = () => {
     if (!result) return "";
-    // Use result.source if available (from API), otherwise infer
     if (result.source) return result.source;
     if (result.from_cache) return "From cache (GPU quota exceeded, using cached T5 result)";
     if (result.is_clip_fallback) return "CLIP Model (fallback - ZeroGPU quota exceeded, no cached T5 result)";
