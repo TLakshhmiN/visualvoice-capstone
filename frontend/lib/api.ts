@@ -1,5 +1,4 @@
-// FINAL API - No frontend caching, fresh model first, cache only on GPU error (in HF Space)
-// Fixes irritating caching where metropolis sentences showed same cached result
+// Visual Voice API - Fixed to show same cache status as HF UI in circle button
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://lakshhminarayanan-visualvoice-api.hf.space';
 
@@ -12,6 +11,7 @@ export interface TranslationResult {
   num_tokens: number;
   is_clip_fallback?: boolean;
   from_cache?: boolean;
+  source?: string;
 }
 
 function getCLIPModel(text: string): TranslationResult {
@@ -40,28 +40,60 @@ function getCLIPModel(text: string): TranslationResult {
     model: "CLIP Model",
     method: "clip",
     num_tokens: pictograms.length,
-    is_clip_fallback: false
+    is_clip_fallback: false,
+    from_cache: false,
+    source: "CLIP Model (direct)"
   };
 }
 
-function getCLIPFallback(text: string): TranslationResult {
+function getCLIPFallback(text: string, reason?: string): TranslationResult {
   const base = getCLIPModel(text);
-  return { ...base, model: "CLIP Model", method: "clip_fallback", is_clip_fallback: true, raw_output: base.pictograms.join(" → ") };
+  return { 
+    ...base, 
+    model: "CLIP Model", 
+    method: "clip_fallback", 
+    is_clip_fallback: true, 
+    from_cache: false,
+    source: reason || "CLIP Model (fallback - ZeroGPU quota exceeded, no cached T5 result)",
+    raw_output: base.pictograms.join(" → ") 
+  };
 }
 
 function parseGradioData(data: any[]) {
   let pictograms: string[] = [];
   let formatted = "";
-  if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted };
+  let from_cache = false;
+  let is_quota_error = false;
+  let quota_no_cache = false;
+
+  if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted, from_cache, is_quota_error, quota_no_cache };
   formatted = (data[0] as string) || "";
   const imagesData = data[1];
   const lowerFormatted = formatted.toLowerCase();
+
   if (lowerFormatted.includes("exceeded") && lowerFormatted.includes("zerogpu")) {
-    return { pictograms: [], formatted: "" };
+    is_quota_error = true;
+    if (lowerFormatted.includes("cached") || lowerFormatted.includes("from cache") || lowerFormatted.includes("raw model (cached)")) {
+      from_cache = true;
+    } else if (lowerFormatted.includes("no cached") || lowerFormatted.includes("no cache")) {
+      quota_no_cache = true;
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    } else {
+      quota_no_cache = true;
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    }
   }
+
   if (lowerFormatted.includes("quota exceeded") || lowerFormatted.includes("runs limit")) {
-    return { pictograms: [], formatted: "" };
+    is_quota_error = true;
+    if (lowerFormatted.includes("cached")) {
+      from_cache = true;
+    } else {
+      quota_no_cache = true;
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    }
   }
+
   if (formatted && formatted.includes("Cleaned AAC:")) {
     const cleanedPart = formatted.split("Cleaned AAC:")[1].split("\n")[0];
     pictograms = cleanedPart.split("→").map((s: string) => s.trim()).filter(Boolean);
@@ -89,7 +121,12 @@ function parseGradioData(data: any[]) {
       }
     }
   }
-  return { pictograms, formatted };
+
+  if (lowerFormatted.includes("from cache: yes") || lowerFormatted.includes("cached") || lowerFormatted.includes("source: from cache")) {
+    from_cache = true;
+  }
+
+  return { pictograms, formatted, from_cache, is_quota_error, quota_no_cache };
 }
 
 export async function translateText(text: string, modelType: string = "auto"): Promise<TranslationResult> {
@@ -126,19 +163,21 @@ export async function translateText(text: string, modelType: string = "auto"): P
       try {
         const result = await (client as any).predict(attempt.fn, attempt.args);
         const data = (result as any).data;
-        const { pictograms, formatted } = parseGradioData(data);
-        if (pictograms.length === 0 && formatted === "") {
-          throw new Error("ZeroGPU quota exceeded");
+        const { pictograms, formatted, from_cache, is_quota_error, quota_no_cache } = parseGradioData(data);
+        if (quota_no_cache) {
+          throw new Error("ZeroGPU quota exceeded with no cache");
         }
         if (pictograms.length > 0) {
           return {
             input: text,
             pictograms,
             raw_output: formatted,
-            model: "T5-Base",
-            method: "t5",
+            model: from_cache ? "T5-Base (from cache)" : "T5-Base",
+            method: from_cache ? "t5_from_cache" : "t5",
             num_tokens: pictograms.length,
-            is_clip_fallback: false
+            is_clip_fallback: false,
+            from_cache: from_cache,
+            source: from_cache ? "From cache (GPU quota exceeded, using cached T5 result)" : "T5 model (fresh prediction)"
           };
         }
       } catch (e) {
@@ -147,7 +186,12 @@ export async function translateText(text: string, modelType: string = "auto"): P
     }
     throw new Error("Empty");
   } catch (err: any) {
-    return getCLIPFallback(text);
+    const msg = err.message?.toLowerCase() || "";
+    let reason = "CLIP Model (fallback - ZeroGPU quota exceeded, no cached T5 result)";
+    if (msg.includes("zerogpu") || msg.includes("quota") || msg.includes("exceeded")) {
+      reason = "CLIP Model (fallback - ZeroGPU quota exceeded, no cached T5 result)";
+    }
+    return getCLIPFallback(text, reason);
   }
 }
 

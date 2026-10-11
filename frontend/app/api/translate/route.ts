@@ -28,31 +28,63 @@ function getCLIPModel(text: string) {
     model: "CLIP Model",
     method: "clip",
     num_tokens: pictograms.length,
-    is_clip_fallback: false
+    is_clip_fallback: false,
+    from_cache: false,
+    source: "CLIP Model (direct)"
   };
 }
 
-function getCLIPFallback(text: string) {
+function getCLIPFallback(text: string, reason?: string) {
   const base = getCLIPModel(text);
-  return { ...base, model: "CLIP Model", method: "clip_fallback", is_clip_fallback: true, raw_output: base.pictograms.join(" → ") };
+  return { 
+    ...base, 
+    model: "CLIP Model", 
+    method: "clip_fallback", 
+    is_clip_fallback: true, 
+    from_cache: false,
+    source: reason || "CLIP Model (fallback - T5 unreachable, ZeroGPU quota exceeded)",
+    raw_output: base.pictograms.join(" → ") 
+  };
 }
 
 function parseGradioData(data: any[]) {
   let pictograms: string[] = [];
   let formatted = "";
-  if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted };
+  let from_cache = false;
+  let is_quota_error = false;
+  let quota_no_cache = false;
+
+  if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted, from_cache, is_quota_error, quota_no_cache };
   formatted = (data[0] as string) || "";
   const imagesData = data[1];
-
-  // FIX: Detect ZeroGPU quota error in formatted text and treat as failure
   const lowerFormatted = formatted.toLowerCase();
+
+  // Detect quota error
   if (lowerFormatted.includes("exceeded") && lowerFormatted.includes("zerogpu")) {
-    console.log("Detected ZeroGPU quota error in Gradio response:", formatted);
-    return { pictograms: [], formatted: "" }; // Trigger fallback
+    is_quota_error = true;
+    // Check if it's cached fallback or no cache
+    if (lowerFormatted.includes("cached") || lowerFormatted.includes("from cache") || lowerFormatted.includes("raw model (cached)")) {
+      from_cache = true;
+      console.log("HF returned cached result due to quota:", formatted);
+    } else if (lowerFormatted.includes("no cached") || lowerFormatted.includes("no cache")) {
+      quota_no_cache = true;
+      console.log("HF quota exceeded with no cache:", formatted);
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    } else {
+      // Quota error but no cache info - treat as no cache
+      quota_no_cache = true;
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    }
   }
+
   if (lowerFormatted.includes("quota exceeded") || lowerFormatted.includes("runs limit")) {
-    console.log("Detected quota error:", formatted);
-    return { pictograms: [], formatted: "" };
+    is_quota_error = true;
+    if (lowerFormatted.includes("cached")) {
+      from_cache = true;
+    } else {
+      quota_no_cache = true;
+      return { pictograms: [], formatted: "", from_cache: false, is_quota_error: true, quota_no_cache: true };
+    }
   }
 
   if (formatted && formatted.includes("Cleaned AAC:")) {
@@ -82,10 +114,16 @@ function parseGradioData(data: any[]) {
       }
     }
   }
-  return { pictograms, formatted };
+
+  // Detect from_cache from formatted text
+  if (lowerFormatted.includes("from cache: yes") || lowerFormatted.includes("cached") || lowerFormatted.includes("source: from cache")) {
+    from_cache = true;
+  }
+
+  return { pictograms, formatted, from_cache, is_quota_error, quota_no_cache };
 }
 
-async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
+async function tryT5WithRetry(text: string, retries = 1): Promise<any> {
   let lastError: any;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -101,33 +139,51 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
         try {
           const result = await (client as any).predict(sig.fn, sig.args);
           const data = (result as any).data;
-          const { pictograms, formatted } = parseGradioData(data);
-          // If pictograms empty due to quota error detection, throw to trigger fallback
-          if (pictograms.length === 0 && formatted === "") {
-            throw new Error("ZeroGPU quota exceeded detected in response");
+          const { pictograms, formatted, from_cache, is_quota_error, quota_no_cache } = parseGradioData(data);
+          
+          if (quota_no_cache) {
+            throw new Error("ZeroGPU quota exceeded with no cache - need CLIP fallback");
           }
+          
           if (pictograms.length > 0) {
             return {
               input: text,
               pictograms,
               raw_output: formatted,
-              model: "T5-Base",
-              method: "t5",
+              model: from_cache ? "T5-Base (from cache)" : "T5-Base",
+              method: from_cache ? "t5_from_cache" : "t5",
               num_tokens: pictograms.length,
-              is_clip_fallback: false
+              is_clip_fallback: false,
+              from_cache: from_cache,
+              source: from_cache ? "From cache (GPU quota exceeded, using cached T5 result)" : "T5 model (fresh prediction)",
+              is_quota_error: is_quota_error
+            };
+          }
+          
+          if (is_quota_error && from_cache) {
+            // Already handled above, but just in case
+            return {
+              input: text,
+              pictograms,
+              raw_output: formatted,
+              model: "T5-Base (from cache)",
+              method: "t5_from_cache",
+              num_tokens: pictograms.length,
+              is_clip_fallback: false,
+              from_cache: true,
+              source: "From cache (GPU quota exceeded, using cached T5 result)"
             };
           }
         } catch (e) { continue; }
       }
-      throw new Error("Empty");
+      throw new Error("Empty result from T5");
     } catch (err: any) {
       lastError = err;
       const msg = err.message?.toLowerCase() || "";
-      // If quota error, don't retry, immediate fallback to CLIP
       if (msg.includes("zerogpu") || msg.includes("exceeded") || msg.includes("quota") || msg.includes("runs limit")) {
-        throw err;
+        throw err; // Don't retry quota errors
       }
-      if (attempt < retries) await new Promise(r => setTimeout(r, 3000));
+      if (attempt < retries) await new Promise(r => setTimeout(r, 2000));
     }
   }
   throw lastError;
@@ -142,12 +198,16 @@ export async function POST(req: NextRequest) {
     if (modelType === "clip") return NextResponse.json(getCLIPModel(text));
 
     try {
-      const result = await tryT5WithRetry(text, 2);
+      const result = await tryT5WithRetry(text, 1);
       return NextResponse.json(result);
     } catch (err: any) {
-      // FIX: On ZeroGPU quota error, return CLIP fallback, not raw error
-      console.log("T5 failed with quota error, returning CLIP fallback:", err.message);
-      return NextResponse.json(getCLIPFallback(text));
+      const msg = err.message?.toLowerCase() || "";
+      let reason = "CLIP Model (fallback - T5 unreachable)";
+      if (msg.includes("zerogpu") || msg.includes("quota") || msg.includes("exceeded") || msg.includes("runs limit")) {
+        reason = "CLIP Model (fallback - ZeroGPU quota exceeded, no cached T5 result)";
+      }
+      console.log("T5 failed, returning CLIP fallback with reason:", reason);
+      return NextResponse.json(getCLIPFallback(text, reason));
     }
 
   } catch (err: any) {
@@ -156,5 +216,5 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ message: "VisualVoice Proxy", hf_space_url: HF_SPACE_URL });
+  return NextResponse.json({ message: "VisualVoice Proxy with cache detection", hf_space_url: HF_SPACE_URL });
 }

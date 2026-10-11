@@ -1,5 +1,4 @@
-// FINAL: Fixed pictogram images mismatch - keeps duplicates and order
-// Fixes: raw 6 tokens but only 4 images (was deduplicating via Set)
+// ARASAAC fetcher - Fixed: keeps duplicates and order, shows fallback text when no image
 
 export interface PictogramDetail {
   word: string;
@@ -33,13 +32,14 @@ export async function searchPictogram(word: string): Promise<PictogramDetail> {
   }
   if (cache.has(cleaned)) {
     const cached = cache.get(cleaned)!;
-    return { ...cached, word: original };
+    return { ...cached, word: original }; // Keep original casing for display
   }
 
   const tries = [
     cleaned,
     cleaned.replace(/_/g, " "),
     cleaned.split("_")[0],
+    cleaned.split("_").find(w => !STOPWORDS.has(w) && w.length > 2) || cleaned
   ];
 
   for (const t of tries) {
@@ -71,19 +71,21 @@ export async function searchPictogram(word: string): Promise<PictogramDetail> {
 }
 
 export async function batch_search_pictograms(words: string[]): Promise<PictogramDetail[]> {
-  // FIXED: Keep original order and duplicates - no Set deduplication
-  // Old: const unique = Array.from(new Set(toSearch)) caused 6 tokens -> 4 images
-  // New: keeps 6 tokens as 6 images (metropolis repeated 3x correctly)
+  // Keep original order and duplicates - FIX for raw 6 tokens but 4 images issue
   const cleaned = words.map(w => cleanWord(w)).filter(w => w.length > 1);
   const meaningful = cleaned.filter(w => !STOPWORDS.has(w));
   const toSearch = meaningful.length > 0 ? meaningful : cleaned;
   
+  // Don't deduplicate - keep order and duplicates for AAC sequence
+  // Previously: const unique = Array.from(new Set(toSearch)) caused 6 tokens -> 4 images
   const results: PictogramDetail[] = [];
   for (const w of toSearch) {
     const detail = await searchPictogram(w);
-    results.push(detail); // Keep all, including duplicates and fallback
+    results.push(detail);
   }
   
+  // Return all, including fallback (with no image) so UI shows word even if no ARASAAC image
+  // Previously filtered fallback, causing mismatch between raw output and images
   return results;
 }
 
