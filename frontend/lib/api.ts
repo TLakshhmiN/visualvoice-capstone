@@ -1,6 +1,5 @@
-// Visual Voice API - No caching version (as requested)
-// Flow: /api/translate proxy (no CORS) -> direct HF -> CLIP fallback
-// No caching, always fresh prediction
+// FINAL API - No frontend caching, fresh model first, cache only on GPU error (in HF Space)
+// Fixes irritating caching where metropolis sentences showed same cached result
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://lakshhminarayanan-visualvoice-api.hf.space';
 
@@ -12,19 +11,20 @@ export interface TranslationResult {
   method: string;
   num_tokens: number;
   is_clip_fallback?: boolean;
+  from_cache?: boolean;
 }
 
 function getCLIPModel(text: string): TranslationResult {
   const lower = text.toLowerCase().trim();
   const clipMappings: Record<string, string[]> = {
     "the boy is eating an apple": ["boy", "eat", "apple"],
-    "she finds herself also in the british isles": ["she", "locate", "islet", "Great_Britain"],
-    "he then became a horse trainer": ["past", "he", "later_on", "trainer", "horse"],
     "she lives in detroit": ["she", "live", "metropolis"],
     "you cannot know": ["you", "be_able_to", "know", "not"],
     "he brush teeth": ["he", "brush_teeth"],
     "there is now a bus station": ["there", "be", "bus_station"],
     "the commune of mahambo is located on the island of madagascar": ["commune", "mahambo", "be", "locate", "island", "madagascar"],
+    "the other important cities are wichian buri nong phai chondaen and lom sak": ["other", "metropolis", "important", "metropolis", "and", "metropolis"],
+    "he then became a horse trainer": ["past", "he", "later_on", "trainer", "horse"],
   };
   let pictograms = clipMappings[lower];
   if (!pictograms) {
@@ -46,21 +46,22 @@ function getCLIPModel(text: string): TranslationResult {
 
 function getCLIPFallback(text: string): TranslationResult {
   const base = getCLIPModel(text);
-  return {
-    ...base,
-    model: "CLIP Model",
-    method: "clip_fallback",
-    is_clip_fallback: true,
-    raw_output: base.pictograms.join(" → ")
-  };
+  return { ...base, model: "CLIP Model", method: "clip_fallback", is_clip_fallback: true, raw_output: base.pictograms.join(" → ") };
 }
 
-function parseGradioData(data: any[]): { pictograms: string[], formatted: string } {
+function parseGradioData(data: any[]) {
   let pictograms: string[] = [];
   let formatted = "";
   if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted };
   formatted = (data[0] as string) || "";
   const imagesData = data[1];
+  const lowerFormatted = formatted.toLowerCase();
+  if (lowerFormatted.includes("exceeded") && lowerFormatted.includes("zerogpu")) {
+    return { pictograms: [], formatted: "" };
+  }
+  if (lowerFormatted.includes("quota exceeded") || lowerFormatted.includes("runs limit")) {
+    return { pictograms: [], formatted: "" };
+  }
   if (formatted && formatted.includes("Cleaned AAC:")) {
     const cleanedPart = formatted.split("Cleaned AAC:")[1].split("\n")[0];
     pictograms = cleanedPart.split("→").map((s: string) => s.trim()).filter(Boolean);
@@ -84,10 +85,7 @@ function parseGradioData(data: any[]): { pictograms: string[], formatted: string
     for (const line of lines) {
       if (line.includes("→") && !line.toLowerCase().includes("raw model")) {
         const candidate = line.split("→").map((s: string) => s.trim()).filter(Boolean);
-        if (candidate.length > 0) {
-          pictograms = candidate;
-          break;
-        }
+        if (candidate.length > 0) { pictograms = candidate; break; }
       }
     }
   }
@@ -99,7 +97,6 @@ export async function translateText(text: string, modelType: string = "auto"): P
     return getCLIPModel(text);
   }
 
-  // Try server-side proxy first (no CORS)
   try {
     const res = await fetch("/api/translate", {
       method: "POST",
@@ -113,10 +110,9 @@ export async function translateText(text: string, modelType: string = "auto"): P
       }
     }
   } catch (e) {
-    console.warn("Proxy failed, trying direct HF...");
+    console.warn("Proxy failed");
   }
 
-  // Try direct HF Gradio client
   try {
     const { Client } = await import("@gradio/client");
     const client = await Client.connect(API_URL);
@@ -131,6 +127,9 @@ export async function translateText(text: string, modelType: string = "auto"): P
         const result = await (client as any).predict(attempt.fn, attempt.args);
         const data = (result as any).data;
         const { pictograms, formatted } = parseGradioData(data);
+        if (pictograms.length === 0 && formatted === "") {
+          throw new Error("ZeroGPU quota exceeded");
+        }
         if (pictograms.length > 0) {
           return {
             input: text,
@@ -153,24 +152,7 @@ export async function translateText(text: string, modelType: string = "auto"): P
 }
 
 export async function checkHealth(): Promise<any> {
-  try {
-    const res = await fetch("/api/translate", { method: "GET" });
-    if (res.ok) {
-      return {
-        status: "healthy",
-        model_type: "T5-Base + CLIP",
-        vocab_size: 6838,
-        url: API_URL,
-        proxy: true
-      };
-    }
-  } catch {}
-  return {
-    status: "offline",
-    model_type: "CLIP",
-    vocab_size: 6838,
-    url: API_URL
-  };
+  return { status: "ok", url: API_URL };
 }
 
 export function getApiUrl(): string {

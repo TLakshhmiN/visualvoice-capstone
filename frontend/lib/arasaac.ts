@@ -1,4 +1,5 @@
-// ARASAAC fetcher - Clean, no emojis, handles punctuation like silent.
+// FINAL: Fixed pictogram images mismatch - keeps duplicates and order
+// Fixes: raw 6 tokens but only 4 images (was deduplicating via Set)
 
 export interface PictogramDetail {
   word: string;
@@ -20,21 +21,25 @@ function cleanWord(word: string): string {
   return word.toLowerCase().trim().replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_");
 }
 
-export async function searchPictogram(word: string): Promise<PictogramDetail | null> {
+export async function searchPictogram(word: string): Promise<PictogramDetail> {
   const original = word.trim();
   const cleaned = cleanWord(word);
   
-  if (!cleaned || cleaned.length < 2) return null;
+  if (!cleaned || cleaned.length < 2) {
+    return { word: original, fallback: true };
+  }
   if (STOPWORDS.has(cleaned)) {
     return { word: original, fallback: true };
   }
-  if (cache.has(cleaned)) return cache.get(cleaned)!;
+  if (cache.has(cleaned)) {
+    const cached = cache.get(cleaned)!;
+    return { ...cached, word: original };
+  }
 
   const tries = [
     cleaned,
     cleaned.replace(/_/g, " "),
     cleaned.split("_")[0],
-    cleaned.split("_").find(w => !STOPWORDS.has(w) && w.length > 2) || cleaned
   ];
 
   for (const t of tries) {
@@ -60,19 +65,26 @@ export async function searchPictogram(word: string): Promise<PictogramDetail | n
     } catch { continue; }
   }
 
-  const fallback: PictogramDetail = { word: original, fallback: true };
+  const fallback: PictogramDetail = { word: original, fallback: true, image_url: undefined };
   cache.set(cleaned, fallback);
   return fallback;
 }
 
 export async function batch_search_pictograms(words: string[]): Promise<PictogramDetail[]> {
+  // FIXED: Keep original order and duplicates - no Set deduplication
+  // Old: const unique = Array.from(new Set(toSearch)) caused 6 tokens -> 4 images
+  // New: keeps 6 tokens as 6 images (metropolis repeated 3x correctly)
   const cleaned = words.map(w => cleanWord(w)).filter(w => w.length > 1);
   const meaningful = cleaned.filter(w => !STOPWORDS.has(w));
   const toSearch = meaningful.length > 0 ? meaningful : cleaned;
-  const unique = Array.from(new Set(toSearch));
   
-  const results = await Promise.all(unique.map(w => searchPictogram(w)));
-  return results.filter(r => r !== null && !r.fallback) as PictogramDetail[];
+  const results: PictogramDetail[] = [];
+  for (const w of toSearch) {
+    const detail = await searchPictogram(w);
+    results.push(detail); // Keep all, including duplicates and fallback
+  }
+  
+  return results;
 }
 
 export function cleanPictogramsForAAC(pictograms: string[]): { raw: string[], cleaned: string[] } {

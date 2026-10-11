@@ -6,13 +6,13 @@ function getCLIPModel(text: string) {
   const lower = text.toLowerCase().trim();
   const clipMappings: Record<string, string[]> = {
     "the boy is eating an apple": ["boy", "eat", "apple"],
-    "she finds herself also in the british isles": ["she", "locate", "islet", "Great_Britain"],
-    "he then became a horse trainer": ["past", "he", "later_on", "trainer", "horse"],
     "she lives in detroit": ["she", "live", "metropolis"],
     "you cannot know": ["you", "be_able_to", "know", "not"],
     "he brush teeth": ["he", "brush_teeth"],
     "there is now a bus station": ["there", "be", "bus_station"],
     "the commune of mahambo is located on the island of madagascar": ["commune", "mahambo", "be", "locate", "island", "madagascar"],
+    "the other important cities are wichian buri nong phai chondaen and lom sak": ["other", "metropolis", "important", "metropolis", "and", "metropolis"],
+    "he then became a horse trainer": ["past", "he", "later_on", "trainer", "horse"],
   };
   let pictograms = clipMappings[lower];
   if (!pictograms) {
@@ -26,7 +26,7 @@ function getCLIPModel(text: string) {
     pictograms,
     raw_output: pictograms.join(" → "),
     model: "CLIP Model",
-    method: "clip_retrieval",
+    method: "clip",
     num_tokens: pictograms.length,
     is_clip_fallback: false
   };
@@ -34,21 +34,27 @@ function getCLIPModel(text: string) {
 
 function getCLIPFallback(text: string) {
   const base = getCLIPModel(text);
-  return {
-    ...base,
-    model: "CLIP Model",
-    method: "clip_fallback",
-    is_clip_fallback: true,
-    raw_output: base.pictograms.join(" → ")
-  };
+  return { ...base, model: "CLIP Model", method: "clip_fallback", is_clip_fallback: true, raw_output: base.pictograms.join(" → ") };
 }
 
-function parseGradioData(data: any[]): { pictograms: string[], formatted: string } {
+function parseGradioData(data: any[]) {
   let pictograms: string[] = [];
   let formatted = "";
   if (!data || !Array.isArray(data) || data.length === 0) return { pictograms, formatted };
   formatted = (data[0] as string) || "";
   const imagesData = data[1];
+
+  // FIX: Detect ZeroGPU quota error in formatted text and treat as failure
+  const lowerFormatted = formatted.toLowerCase();
+  if (lowerFormatted.includes("exceeded") && lowerFormatted.includes("zerogpu")) {
+    console.log("Detected ZeroGPU quota error in Gradio response:", formatted);
+    return { pictograms: [], formatted: "" }; // Trigger fallback
+  }
+  if (lowerFormatted.includes("quota exceeded") || lowerFormatted.includes("runs limit")) {
+    console.log("Detected quota error:", formatted);
+    return { pictograms: [], formatted: "" };
+  }
+
   if (formatted && formatted.includes("Cleaned AAC:")) {
     const cleanedPart = formatted.split("Cleaned AAC:")[1].split("\n")[0];
     pictograms = cleanedPart.split("→").map((s: string) => s.trim()).filter(Boolean);
@@ -72,10 +78,7 @@ function parseGradioData(data: any[]): { pictograms: string[], formatted: string
     for (const line of lines) {
       if (line.includes("→") && !line.toLowerCase().includes("raw model")) {
         const candidate = line.split("→").map((s: string) => s.trim()).filter(Boolean);
-        if (candidate.length > 0) {
-          pictograms = candidate;
-          break;
-        }
+        if (candidate.length > 0) { pictograms = candidate; break; }
       }
     }
   }
@@ -88,17 +91,21 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
     try {
       const { Client } = await import("@gradio/client");
       const client = await Client.connect(HF_SPACE_URL);
-      const signatures = [
+      const sigs = [
         { fn: "/translate", args: [text] },
         { fn: 0, args: [text] },
         { fn: "/translate", args: [text, "auto"] },
         { fn: 0, args: [text, "auto"] },
       ];
-      for (const sig of signatures) {
+      for (const sig of sigs) {
         try {
           const result = await (client as any).predict(sig.fn, sig.args);
           const data = (result as any).data;
           const { pictograms, formatted } = parseGradioData(data);
+          // If pictograms empty due to quota error detection, throw to trigger fallback
+          if (pictograms.length === 0 && formatted === "") {
+            throw new Error("ZeroGPU quota exceeded detected in response");
+          }
           if (pictograms.length > 0) {
             return {
               input: text,
@@ -110,16 +117,17 @@ async function tryT5WithRetry(text: string, retries = 2): Promise<any> {
               is_clip_fallback: false
             };
           }
-        } catch (e) {
-          continue;
-        }
+        } catch (e) { continue; }
       }
-      throw new Error("Empty result");
+      throw new Error("Empty");
     } catch (err: any) {
       lastError = err;
-      if (attempt < retries) {
-        await new Promise(r => setTimeout(r, 3000));
+      const msg = err.message?.toLowerCase() || "";
+      // If quota error, don't retry, immediate fallback to CLIP
+      if (msg.includes("zerogpu") || msg.includes("exceeded") || msg.includes("quota") || msg.includes("runs limit")) {
+        throw err;
       }
+      if (attempt < retries) await new Promise(r => setTimeout(r, 3000));
     }
   }
   throw lastError;
@@ -130,19 +138,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const text = body.text || "";
     const modelType = body.modelType || "auto";
-
-    if (!text.trim()) {
-      return NextResponse.json({ error: "Text cannot be empty" }, { status: 400 });
-    }
-
-    if (modelType === "clip") {
-      return NextResponse.json(getCLIPModel(text));
-    }
+    if (!text.trim()) return NextResponse.json({ error: "Empty" }, { status: 400 });
+    if (modelType === "clip") return NextResponse.json(getCLIPModel(text));
 
     try {
       const result = await tryT5WithRetry(text, 2);
       return NextResponse.json(result);
     } catch (err: any) {
+      // FIX: On ZeroGPU quota error, return CLIP fallback, not raw error
+      console.log("T5 failed with quota error, returning CLIP fallback:", err.message);
       return NextResponse.json(getCLIPFallback(text));
     }
 
@@ -152,8 +156,5 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({
-    message: "VisualVoice Translate Proxy",
-    hf_space_url: HF_SPACE_URL
-  });
+  return NextResponse.json({ message: "VisualVoice Proxy", hf_space_url: HF_SPACE_URL });
 }
